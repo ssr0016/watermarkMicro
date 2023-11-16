@@ -3,10 +3,10 @@ package endpoints
 import (
 	"context"
 	"errors"
-	"log"
 	"os"
 
 	"github.com/aayushrangwala/watermark-service/pkg/watermark"
+	"github.com/velotiotech/watermark-service/internal"
 
 	"github.com/go-kit/kit/endpoint"
 )
@@ -31,16 +31,16 @@ func NewEndpointSet(svc watermark.Service) Set {
 
 func MakeGetEndpoint(svc watermark.Service) endpoint.Endpoint {
 	return func(ctx context.Context, request interface{}) (interface{}, error) {
-		req := request.(StatusRequest)
-		status, err := svc.Status(ctx, req.TicketID)
+		req := request.(GetRequest)
+		docs, err := svc.Get(ctx, req.Filters...)
 		if err != nil {
-			return StatusResponse{Status: status, Err: err.Error(), nil}
+			return GetResponse{docs, err.Error()}, nil
 		}
-		return StatusResponse{Status: status, Err: ""}, nil
+		return GetResponse{docs, ""}, nil
 	}
 }
 
-func MakeStatusEndpoint(svc water.Service) endpoint.Endpoint {
+func MakeStatusEndpoint(svc watermark.Service) endpoint.Endpoint {
 	return func(ctx context.Context, request interface{}) (interface{}, error) {
 		req := request.(StatusRequest)
 		status, err := svc.Status(ctx, req.TicketID)
@@ -48,7 +48,7 @@ func MakeStatusEndpoint(svc water.Service) endpoint.Endpoint {
 			return StatusResponse{Status: status, Err: err.Error()}, nil
 		}
 
-		return AddDocumentResponse{TicketID: ticketID, Err: ""}, nil
+		return StatusResponse{Status: status, Err: ""}, nil
 	}
 }
 
@@ -68,19 +68,71 @@ func MakeWatermarkEndpoint(svc watermark.Service) endpoint.Endpoint {
 		req := request.(WatermarkRequest)
 		code, err := svc.Watermark(ctx, req.TicketID, req.Mark)
 		if err != nil {
-			return ServiceStatusResponse{Code: code, Err: err.Error(), nil}
+			return WatermarkResponse{Code: code, Err: err.Error()}, nil
 		}
 		return ServiceStatusResponse{Code: code, Err: ""}, nil
 	}
 }
 
+func (s *Set) MakeServiceStatusEndpoint(svc watermark.Service) endpoint.Endpoint {
+	return func(ctx context.Context, request interface{}) (interface{}, error) {
+		_ = request.(ServiceStatusRequest)
+		code, err := svc.ServiceStatus(ctx)
+		if err != nil {
+			return ServiceStatusResponse{Code: code, Err: err.Error()}, nil
+		}
+		return ServiceStatusResponse{Code: code, Err: ""}, nil
+	}
+
+}
+
+func (s *Set) Get(ctx context.Context, filters ...internal.Filter) ([]internal.Document, error) {
+	resp, err := s.GetEndpoint(ctx, GetRequest{Filters: filters})
+	if err != nil {
+		return []internal.Document{}, err
+	}
+	getResp := resp.(GetResponse)
+	if getResp.Err != "" {
+		return []internal.Document{}, errors.New(getResp.Err)
+	}
+	return getResp.Documents, nil
+}
+
 func (s *Set) ServiceStatus(ctx context.Context) (int, error) {
-	resp, err := s.ServiceStatusEndpoint(ctx, ServiceStatusRequest)
+	resp, err := s.ServiceStatusEndpoint(ctx, ServiceStatusRequest{})
 	svcStatusResp := resp.(ServiceStatusResponse)
 	if err != nil {
+		return svcStatusResp.Code, err
+	}
+	if svcStatusResp.Err != "" {
 		return svcStatusResp.Code, errors.New(svcStatusResp.Err)
 	}
 	return svcStatusResp.Code, nil
+}
+
+func (s *Set) AddDocument(ctx context.Context, doc *internal.Document) (string, error) {
+	resp, err := s.AddDocumentEndpoint(ctx, AddDocumentRequest{Document: doc})
+	if err != nil {
+		return "", err
+	}
+
+	adResp := resp.(AddDocumentResponse)
+	if adResp.Err != "" {
+		return "", errors.New(adResp.Err)
+	}
+	return adResp.TicketID, nil
+}
+
+func (s *Set) Status(ctx context.Context, ticketID string) (internal.Status, error) {
+	resp, err := s.StatusEndpoint(ctx, StatusRequest{TicketID: ticketID})
+	if err != nil {
+		return internal.Failed, err
+	}
+	stsResp := resp.(StatusResponse)
+	if stsResp.Err != "" {
+		return internal.Failed, errors.New(stsResp.Err)
+	}
+	return stsResp.Status, nil
 }
 
 func (s *Set) Watermark(ctx context.Context, ticketID, mark string) (int, error) {
